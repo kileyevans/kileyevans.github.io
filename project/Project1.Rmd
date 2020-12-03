@@ -1,0 +1,142 @@
+---
+title: "Project1"
+output: html_document
+---
+
+
+```{R}
+library(tidyverse)
+```  
+
+Introduction:
+  The first dataset was acquired from College Board and includes the number of schools offering AP courses, the number of students taking AP courses, the number of AP exams taken, and the number of colleges accepting AP credit from 1955 to 2015. 
+  The second dataset was acquired from the National Center for Education Statistics and includes information about college enrollment from 1947 to projected numbers of 2023 in the U.S. Its variables cover total college enrollment, full-time college students, part-time college students, percent of students doing part time, male college students, female college students, percent of students who are female, total public college enrollment, total private college enrollment, enrollment in non-profit private colleges, and enrollment in for-profit private colleges.
+  These datasets can be joined by year, and it could be interesting to look into any relationship between the availability and acceptance of AP courses and various factors of college enrollment. For example, I would expect as the number of students taking AP exams increases, so might the total enrollment of students in colleges that year. 
+
+```{R}
+library(readxl)
+APData <- read_excel("APData.xls")
+ColData <- read_excel("ColData.xlsx")
+APData2 <- APData %>% select(-c(4, 7:23)) %>% rename(c("Year" = "...1", "Schools" = "...2", "Students" = "...3", "Exams" = "...5", "Colleges" = "...6")) %>% slice(-c(1, 64:69)) %>% na.omit() %>% separate(Year, into= c("Year", NA), sep=4, convert=T) %>% mutate(Schools = as.numeric(Schools), Students = as.numeric(Students), Exams = as.numeric(Exams), Colleges = as.numeric(Colleges))
+
+ColData2 <- ColData %>% mutate(Year = as.character(Year))
+```
+
+Since the datasets were already tidy, I used the AP Data to demonstrate the use of pivot_longer and pivot_wider. After pivoting longer, a 'Names' column was created containing whether the value in the 'Values' column corresponded to 'Schools' or 'Students'. The same was done for 'Exams' and 'Colleges'. When pivoted wider, the variables of schools and students were given their own columns again with corresponding values listed below. The same happened for the exams and colleges variables.
+
+```{R}
+APData3 <- APData2 %>% pivot_longer(c("Schools", "Students"), names_to="Names", values_to="Values") %>% pivot_longer(c("Exams", "Colleges"), names_to="Names1", values_to="Values1") %>% glimpse()
+ 
+APData3  %>% pivot_wider(names_from="Names", values_from="Values") %>% pivot_wider(names_from="Names1", values_from="Values1") %>% glimpse()
+```
+
+Joining/Merging:
+I will perform an inner join so that it will drop rows without a match so there are no NAs introduced. I joined by year, so only the years with a match in each dataset will remain. Since AP Data didn't start until 1955, the data for the years 1947-1954 in College Data was dropped; this would only be an issue if I was specifically looking at these years and not trends over time as a whole. The AP Data only went up to 2015, so the data for years 2016-2019 and the projected data for 2020-2023 from the College Data was dropped. This should not be a major issue either as there is still over 50 years of data to analyze in the joint dataset. 
+
+```{R}
+fuldat <- inner_join(APData2, ColData2, by="Year","Year")
+```
+Wrangling:
+  First, I used filter() to only show when the number of exams offerred was greater than the median, then I used summarize_all to find the mean for each variable; I repeated this with exams less than the median, and the mean for each variable was significantly lower. Second, I generated a new variable that is a function of two other variables to show the Ratio of NonProfit to For-Profit Private Colleges for a given year. Third, I selected every column but the first since it just contains the years then used summarize_if() to select only numeric variables and looked at each of their standard deviations and means. 
+  Next, I created a categorical variable where MoreFem represents when the percent female was over 50 and LessFem represents when it was less than or equal to 50. I then grouped by this new variable and year to look at the minimum total enrollment followed by the maximum, arranged by descending year. I then grouped by the variable I created and summarized the mean for Total Private, to see it is much higher when there are more females. 
+
+
+```{R}
+fuldat %>% filter(Exams>median(Exams)) %>% summarize_all(mean)
+
+fuldat %>% filter(Exams<median(Exams)) %>% summarize_all(mean)
+
+fuldat %>% mutate('NonProfit/ForProfit Ratio'= `Private Nonprofit`/`Private For-profit`) %>% na.omit()
+
+fuldat %>% select(-1) %>% summarize_if(is.numeric, sd,  na.rm=T)
+
+fuldat %>% select(-1) %>% summarize_if(is.numeric, mean,  na.rm=T)
+
+fuldat2 <- fuldat %>% mutate(MF = case_when(`Percent Female` <=  50 ~ "LessFem",
+'Percent Female' > 50  ~ "MoreFem"))
+
+fuldat2 %>% group_by(Year, MF) %>% summarize(min(`Total Enrollment`)) %>% arrange(desc(Year))
+
+fuldat2 %>% group_by(Year, MF) %>% summarize(max(`Total Enrollment`))
+
+fuldat2 %>% group_by(MF) %>% summarize(median(`Total Private`))
+
+cormat <- fuldat %>% select_if(is.numeric) %>% cor(use="pair")
+cormat
+```
+
+Correlation Heatmap: 
+Percent-Part Time seems to have the least correlation with other variables, as it has fairly dark squares across the whole map. Other than that, the correlations are pretty consistent, with a few squares seeming to be darker (less correlated), like Percent Female and Private Non-Profit or Exams and Percent Female. It seems that, apart from Percent Part-Time, all of the numeric variables have similar correlations with one another. 
+
+```{R}
+library(ggplot2)
+tidycor <- cormat %>% as.data.frame %>% rownames_to_column("Variable 1") %>%
+pivot_longer(-1,names_to="Variable 2",values_to="correlation")
+tidycor %>% ggplot(aes(`Variable 1`,`Variable 2`,fill= correlation))+geom_tile()+theme(axis.text.x = element_text(angle=90, hjust=1)) + ggtitle("Correlation Heatmap")
+```
+
+Visualization 2:
+I created a categorical variable that separates into More TE, when total enrollment is above the median, and Less TE, when total enrollment is below or equal to the median. I then created a plot where the x-axis shows the Year and the y-axis shows the number of colleges accepting AP credit. They are then facet wrapped by the new TE variable. As the years go on, you can clearly see a steady increase in the amount of colleges taking credits. Looking at when there was less total enrollment, it seems to start with a slow rise then begins rising at an increasing rate. Looking at when there was more total enrollment, there is a decent size dip in colleges around the 1990s, so maybe there was a drop in credit acceptance during those years. 
+
+```{r}
+fuldat0 <- fuldat %>% mutate(TE = case_when(`Total Enrollment` <=  median(`Total Enrollment`) ~ "LessTE", `Total Enrollment` > median(`Total Enrollment`)  ~ "MoreTE")) 
+ggplot(fuldat0, aes(Year))+ geom_bar(aes(y=Colleges,fill=Year), stat="summary", fun=mean) +
+theme(axis.text.x = element_text(angle=90, hjust=1), legend.position="none") + facet_wrap(~TE) + ggtitle("College Acceptance of AP Credits by Year and Total Enrollment") + scale_y_continuous(breaks=seq(0,4000,500)) + scale_x_discrete(guide = guide_axis(n.dodge = 2))
+```
+
+Visualization 3:
+I used the categorical variable created earlier out of Percent Female; it is either LessFem, when percent female is less than or equal to 50, or MoreFem, when percent female is over 50. We can see that it was consistently less female until the late 1970s but has been consistently more female ever since. The number of schools offering AP courses has steadily climbed from 1955 to 2015. In the mid-60s to mid-70s, there was a bit of a drop in the rate of increasing, and there was a sudden spike in Schools around 2013-2015. 
+
+```{R}
+fuldat2 <- fuldat %>% mutate(MF = case_when(`Percent Female` <=  50 ~ "LessFem",
+`Percent Female` > 50  ~ "MoreFem"))
+
+ggplot(data = fuldat2, aes(x = Year, y = Schools, color = MF)) +
+geom_point(size=4) + geom_line(aes(group=MF)) + theme_minimal() +
+theme(axis.text.x = element_text(angle=90, hjust=1)) +ggtitle("Number of Schools Offering AP Courses by Year and by Percent Female") 
+```
+
+PCA:
+
+```{R}
+ful_nums<- fuldat %>% select_if(is.numeric) %>% na.omit() %>% scale
+rownames(ful_nums)<-fuldat$Name
+ful_pca<-princomp(ful_nums)
+names(ful_pca)
+summary(ful_pca, loadings=T)
+
+eigval<-ful_pca$sdev^2
+varprop=round(eigval/sum(eigval), 2)
+ggplot() + geom_bar(aes(y=varprop, x=1:15), stat="identity") + xlab("") + geom_path(aes(y=varprop, x=1:15)) + 
+  geom_text(aes(x=1:15, y=varprop, label=round(varprop, 2)), vjust=1, col="white", size=5) + 
+  scale_y_continuous(breaks=seq(0, .6, .2), labels = scales::percent) + 
+  scale_x_continuous(breaks=1:10) + ggtitle("PCs to Keep")
+eigval[1:15]
+
+```
+  For PCA, I will start cleaning the data by getting rid of the Year column so only the numeric variables remain and scaling the data so the mean is 0 and standard deviation is 1. I then run princomp() on the scaled data and summarize the results. 
+  I decide to keep 2 PCs based on the scree plot flattening/having an elbow after 2. The summary also tells us that 99% of the variation can be explained by the first two components, so 2 seems like a good choice. Kaiser's rule of choosing those with Eigen values greater than 1 also applies to only the first two components. PC1 has similar correlations (sign and magnitude) for all of the variables. PC2 is most correlated (though this time negatively) to Percent Part-Time by a significant amount, so a higher score on PC2 could mean a lower percent of part-time students. 
+
+
+```{R}
+fuldf<-data.frame(PC1=ful_pca$scores[, 1], PC2=ful_pca$scores[, 2])
+ggplot(fuldf, aes(PC1, PC2)) + geom_point() + ggtitle("New PC Scores")
+
+ful_pca$loadings[1:7, 1:2] %>% as.data.frame %>% rownames_to_column %>%
+ggplot() + geom_hline(aes(yintercept=0), lty=2) +
+geom_vline(aes(xintercept=0), lty=2) + ylab("PC2") + xlab("PC1") +
+geom_segment(aes(x=0, y=0, xend=Comp.1, yend=Comp.2), arrow=arrow(), col="red") +
+geom_label(aes(x=Comp.1*1.1, y=Comp.2*1.1, label=rowname)) + ggtitle("Loading Plot")
+
+library(factoextra)
+fviz_pca_biplot(ful_pca)
+```
+
+The New PCs plot shows us the data in regards to the first 2 principle components. PC1 is doing the majority of the work as can be seen in the plot. The Loading plot tells us which vars contribute to which PCs, and the closer the angles between each vector represents a higher correlation. Here we can see that part-time is strongly negatively correlated with PC2, as seen in the summary above. Total Enrollment and Full Time have a weaker positive correlation with PC1 as seen in the summary as well.
+
+---
+
+```{R, echo=F}
+## DO NOT DELETE OR MODIFY THIS CHUNK: IT MUST BE PRESENT TO RECEIVE CREDIT FOR THE ASSIGNMENT
+sessionInfo(); Sys.time(); Sys.info()
+```

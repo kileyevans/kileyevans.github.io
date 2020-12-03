@@ -1,0 +1,210 @@
+---
+title: "Project2"
+author: "SDS348"
+output: html_document
+---
+
+
+Project 2
+
+```{R}
+library(tidyverse)
+library(lmtest)
+class_diag <- function(probs,truth){
+tab<-table(factor(probs>.5,levels=c("FALSE","TRUE")),truth)
+acc=sum(diag(tab))/sum(tab)
+sens=tab[2,2]/colSums(tab)[2]
+spec=tab[1,1]/colSums(tab)[1]
+ppv=tab[2,2]/rowSums(tab)[2]
+f1=2*(sens*ppv)/(sens+ppv)
+if(is.numeric(truth)==FALSE & is.logical(truth)==FALSE) truth<-as.numeric(truth)-1
+#CALCULATE EXACT AUC
+ord<-order(probs, decreasing=TRUE)
+probs <- probs[ord]; truth <- truth[ord]
+TPR=cumsum(truth)/max(1,sum(truth))
+FPR=cumsum(!truth)/max(1,sum(!truth))
+dup<-c(probs[-1]>=probs[-length(probs)], FALSE)
+TPR<-c(0,TPR[!dup],1); FPR<-c(0,FPR[!dup],1)
+n <- length(TPR)
+auc<- sum( ((TPR[-1]+TPR[-n])/2) * (FPR[-1]-FPR[-n]) )
+data.frame(acc,sens,spec,ppv,f1,auc)}
+```
+
+Introduction:
+This dataset covers all of the named hurricanes, starting in 1950 up until 2012. There are variables covering the year, maximum sustained wind speed (>1 minute, in mph), atmospheric pressure at landfall (in millibars), property damage (actual amount and adjusted amount for 2014, in millions of dollars and amount of damage), affected states, date of first landfall, deaths, and gender of the hurricane's name. There are 94 observations. A controversial paper claimed that hurricanes with female names caused more property damage than those with male names, so it will be interesting to look into that possible relationship in various ways.
+
+```{R}
+HurrDat <- read_csv("hurricNamed.csv")
+
+man1<-manova(cbind(Year,LF.WindsMPH, LF.PressureMB, LF.times, BaseDam2014, BaseDamage, NDAM2014, deaths)~mf, data=HurrDat)
+summary(man1)
+
+man2<-manova(cbind(BaseDam2014, BaseDamage, NDAM2014, deaths)~mf, data=HurrDat)
+summary(man2)
+
+library(rstatix)
+group <- HurrDat$mf 
+DVs <- HurrDat %>% select(Year, LF.WindsMPH, LF.PressureMB, LF.times, BaseDam2014, BaseDamage, NDAM2014, deaths)
+sapply(split(DVs,group), mshapiro_test)
+``` 
+
+The overall MANOVA was not significant (Pillai trace=.13715, Pseudo F(8,85), p=.1128). Because of the aforementioned paper, I performed a second MANOVA with just variables relating to damage, and it was still not significant (Pillai trace=.051685, Pesudo F(4,89), p=.3111). For either of the two overall MANOVAS, the probability of Type 1 error would only be .05 according to the Bonferroni correction (.05/1), as neither was significant so no further tests were done. 
+
+For multivariate noramality, we reject the null hypothesis of normality (p=1.871346e-16 for females and 1.410399e-09 for males). Since this assumption wasn't met, we won't test for homogeneity of covariance matrices. 
+
+```{R}
+HurrDat%>%group_by(mf)%>%summarize(means=mean(BaseDam2014))%>%summarize(`mean_diff`=diff(means))
+set.seed(348)
+Hurr_dist<-vector()
+for(i in 1:5000){
+new<-data.frame(BaseDam2014=sample(HurrDat$BaseDam2014),mf=HurrDat$mf)
+Hurr_dist[i]<-mean(new[new$mf=="m",]$BaseDam2014)- mean(new[new$mf=="f",]$BaseDam2014)}
+mean(Hurr_dist>179.7273	 | Hurr_dist < -179.7273	)
+sd(Hurr_dist)
+
+data.frame(Hurr_dist) %>%
+ggplot(aes(Hurr_dist)) + geom_histogram(aes(y=..density..))+
+stat_function(fun=dnorm,args=list(mean=  0.9632, sd= 2763.059),geom="line") + ggtitle("Hurricane Distrubution")
+``` 
+
+The null hypothesis is that there is no difference in the mean base damage (adjusted to 2014 levels) between hurricanes named one of the two sexes. The alternative hypothesis is that there is a difference in the mean base damage. A randomization test was performed, and we failed to reject the null hypothesis, so there was not a significant difference in the mean base damage between the sexes (p=.9632).
+
+
+```{R}
+HurrDat1 <- HurrDat %>% mutate(Wind_c= LF.WindsMPH-mean(LF.WindsMPH))
+fit <- lm(NDAM2014~mf*Wind_c, data=HurrDat1)
+summary(fit)
+
+ggplot(HurrDat1, aes(x=Wind_c, y=NDAM2014,group=mf))+geom_point(aes(color=mf))+
+geom_smooth(method="lm",formula=y~1,se=F,fullrange=T,aes(color=mf))+
+theme(legend.position=c(.9,.19))+xlab("Wind(mph)") +ggtitle("Damage vs Hurricane Gender and Wind Speeds")
+
+library(sandwich)
+resids<-fit$residuals
+ggplot()+geom_histogram(aes(resids),bins=10) #linearity
+ks.test(resids, "pnorm", mean=0, sd(resids)) #HO: normal
+bptest(fit) #HO: homoskedastic
+
+coeftest(fit, vcov = vcovHC(fit))
+summary(fit)$r.sq
+```
+I wanted to look into a possible relationship between the interaction of the landfall wind speeds and gender of the hurricane and the amount of damage the hurricane caused. 8464.34 is the mean predicted damage for average winds and female name. For a hurricane with average winds, male names have an average predicted damage that is 381.41 more than females. The estimated slope for winds on damage for female names is 254.54, and the difference in slopes is 219.84.
+
+The linearity plot of residuals does not look normal, so we do not meet the assumption of linearity. Based on the KS Test, I reject the null hypothesis of normality, so we do not meet that assumption (p=.0002). The Breusch-Pagan test failed to reject the null hypothesis, so we do meet the assumption of homoskedasticity (p=.3754).
+
+As stated before, for a hurricane with average winds, male names have an average predicted damage that is 381.41 more than females, but the difference is not significant (b=381.41, t=.1226, p=.90268). There are no changes from before the robust SEs. 26.57046% of the variance in damage can be explained by this model.
+
+```{R}
+fitted<-fit$fitted.values
+resid_resamp<-replicate(5000,{
+new_resids<-sample(resids,replace=TRUE) 
+HurrDat1$new_NDAM2014<-fitted+new_resids
+fit <- lm(new_NDAM2014~mf*Wind_c, data=HurrDat1) 
+coef(fit)
+})
+
+coeftest(fit)[,1:2]
+coeftest(fit, vcov=vcovHC(fit))[,1:2]
+resid_resamp%>%t%>%as.data.frame%>%summarize_all(sd)
+summary(fit)
+``` 
+
+The SEs got a little bit higher from the original SEs to the robust SEs, but the bootstrapped SEs are much lower than both. The p-values did not change from the original fit.
+
+```{R}
+HurrDat1 <- HurrDat %>% mutate(mfb=ifelse(mf=="m",1,0))
+fit2 <- glm(mfb~BaseDam2014+NDAM2014, data= HurrDat1)
+coef(fit2)
+
+exp(3.304754e-01)
+exp(3.944835e-06)
+exp(-3.602580e-06)
+probs<-predict(fit2, type="response")
+table(predict=as.numeric(probs>.5), truth=HurrDat1$mfb)%>%addmargins
+class_diag(probs, HurrDat1$mfb)
+
+HurrDat1$logit<-predict(fit2,type="link")
+HurrDat1%>%ggplot()+geom_density(aes(logit,color=mfb,fill=mfb), alpha=.4)+
+  theme(legend.position=c(.85,.85))+geom_vline(xintercept=0)+xlab("logit (log-odds)")+
+  geom_rug(aes(logit,color=mfb))
+
+library(plotROC)
+roc <- ggplot(HurrDat1) + geom_roc(aes(d=mfb, m=probs), n.cuts=0)
+roc
+calc_auc(roc)
+```
+
+To look into the theory of female hurricanes causing more damage, I ran this logistic model. The log of odds is 3.304754e-01 + 3.944835e-06(BaseDam2014) - 3.602580e-06(NDAM2014). Thus, the odds are 1.39163 * 1.000004(BaseDam2014) * 0.9999964(NDAM2014), where 1.39163 is the predicted odds of being male when BaseDam2014 = NDAM2014 = 0.
+
+According to the confusion matrix and class diagnostics, The TPR or sensitivity is 0/30 or 0, the TNR or specificity is 64/64 or 1, and the PPV or proportion classified male when they actually are is 0/0 or NA. The AUC is 0.5984375, which means the model is considered bad at predicting new data.
+
+Again, the AUC is bad at 0.5984375, and we want a plot where TPR is as close to 1 as possible while FPR is close to 0 for any cutoff, but the ROC plot shows it is not even close to this, with nearly as many false positives as true ones.
+```{R}
+HurrDat2 <- HurrDat1 %>% select(-c(logit, X1, Name, AffectedStates, mf)) %>% na.omit()
+head(HurrDat2)
+fit3 <- glm(mfb~(.), data=HurrDat2)
+summary(fit3)
+prob3 <- predict(fit3, type="response")
+class_diag(prob3, HurrDat2$mfb)
+
+
+#10-fold CV
+set.seed(1234)
+k=10
+data<-HurrDat2[sample(nrow(HurrDat2)),]
+folds<-cut(seq(1:nrow(HurrDat2)),breaks=k,labels=F) 
+diags<-NULL
+for(i in 1:k){
+train<-data[folds!=i,]
+test<-data[folds==i,]
+truth<-test$mfb
+fit<-glm(mfb~(.),data=train,family="binomial")
+probs<-predict(fit,newdata = test,type="response")
+diags<-rbind(diags,class_diag(probs,truth))
+}
+summarize_all(diags,mean) 
+
+
+#Lasso
+library(glmnet)
+y<-as.matrix(HurrDat2$mfb)
+x<-model.matrix(mfb~.,data=HurrDat2)[,-1]
+scale(x)
+head(x)
+cv2<-cv.glmnet(x,y, family="binomial")
+lasso2<-glmnet(x,y,family="binomial",lambda=cv2$lambda.1se)
+coef(lasso2)
+
+
+#10-Fold CV on Lasso Model
+set.seed(1234)
+k=10
+data <- HurrDat2 %>% sample_frac
+folds <- ntile(1:nrow(data),n=10)
+diags<-NULL
+for(i in 1:k){
+train <- data[folds!=i,]
+test <- data[folds==i,]
+truth <- test$mfb
+fit <- glm(mfb~Year,
+data=train, family="binomial")
+probs <- predict(fit, newdata=test, type="response")
+diags<-rbind(diags,class_diag(probs,truth))
+}
+diags%>%summarize_all(mean)
+
+
+```
+
+I selected to drop the variables that would not make sense to include. For the logistic model, the AUC of 0.7260417 is considered to be fair at predicting new data. The specificity (0.890625) is high but the sensitivity (0.1666667) is very low, so we are not getting as many true positives as we'd hope to. The accuracy is 0.6595745 and the precision is 0.4166667, which aren't as low as the sensitivity but still aren't as high as desired.
+
+For the 10-fold CV with the original model, the accuracy is 0.5588889, the sensitivity is 0.1833333, the specificity is 0.7423016, and the AUC is 0.5403532 (the precision was NA). The AUC is now considered bad at predicting new data. The accuracy and specificity decreased a bit, while the sensitivity increased slightly so we have more true positives (still low).
+
+After performing LASSO on this same model, the only variable to be retained was year, so I performed another 10-fold CV just including year. This model's AUC is 0.635377, so it is better than the 10-fold CV's AUC but worse than the first logistic model's AUC. It would be considered poor at predicting new data. The accuracy is 0.6222222, the sensitivity is	0.175, and the specificity is	0.8613095	(precision is NA again). After LASSO, the accuracy and specificity are higher than the CV but lower than the original logistic model, and the sensitivity is higher than the original logistic model but lower than the CV.
+
+
+
+
+
+
+
