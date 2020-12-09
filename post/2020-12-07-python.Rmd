@@ -1,0 +1,13 @@
+---
+title: Python
+author: 'Kiley Evans'
+date: '2020-12-07'
+slug: python
+categories: []
+tags: []
+description: ''
+---
+
+somethinggg
+[Link to project 1](project/project1/)
+![](/post/2020-12-07-python_files/IMG_9420.jpg)
