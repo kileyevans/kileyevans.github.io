@@ -47,4 +47,4 @@ cat(c(capitol,py$capitol))
 
 ##Here is a Picture of Us at the Capitol!
 
-![](/post/2020-12-07-python_files/IMG_9420.jpg)
+![](/post/2020-12-07-python_files/IMG_9420.jpg){width=100% height=100%}
